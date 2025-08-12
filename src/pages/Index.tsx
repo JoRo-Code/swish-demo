@@ -1,17 +1,44 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, History, QrCode } from "lucide-react";
+import { Plus, History, QrCode, LogOut, User } from "lucide-react";
 import { BalanceCard } from "@/components/BalanceCard";
 import { TransactionItem } from "@/components/TransactionItem";
 import { ContactList } from "@/components/ContactList";
 import { SendMoneyForm } from "@/components/SendMoneyForm";
-import { mockTransactions, Contact } from "@/lib/mockData";
+import { Contact, Transaction } from "@/services/userService";
+import { transactionService } from "@/services/transactionService";
+import { useAuth } from "@/contexts/AuthContext";
 import financialBg from "@/assets/financial-bg.jpg";
 
 const Index = () => {
+  const { user, isAuthenticated, logout } = useAuth();
   const [showSendForm, setShowSendForm] = useState(false);
   const [selectedContact, setSelectedContact] = useState<Contact | undefined>();
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [isLoadingTransactions, setIsLoadingTransactions] = useState(false);
+
+  useEffect(() => {
+    if (isAuthenticated && user) {
+      loadUserTransactions();
+    }
+  }, [isAuthenticated, user]);
+
+  const loadUserTransactions = async () => {
+    if (!user) return;
+    
+    setIsLoadingTransactions(true);
+    try {
+      const response = await transactionService.getUserTransactions(user.id, 5);
+      if (response.data) {
+        setTransactions(response.data.transactions);
+      }
+    } catch (error) {
+      console.error('Error loading transactions:', error);
+    } finally {
+      setIsLoadingTransactions(false);
+    }
+  };
 
   const handleContactSelect = (contact: Contact) => {
     setSelectedContact(contact);
@@ -21,6 +48,11 @@ const Index = () => {
   const handleSendMoney = () => {
     setSelectedContact(undefined);
     setShowSendForm(true);
+  };
+
+  const handleTransactionComplete = () => {
+    // Reload transactions after a successful transfer
+    loadUserTransactions();
   };
 
   return (
@@ -38,6 +70,35 @@ const Index = () => {
           </div>
           <BalanceCard />
         </div>
+      </div>
+
+      {/* User Profile Header */}
+      <div className="max-w-md mx-auto px-6 py-4">
+        <Card className="p-4 bg-gradient-card shadow-card border-0">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <div className="w-10 h-10 bg-primary rounded-full flex items-center justify-center">
+                <User className="h-5 w-5 text-white" />
+              </div>
+              <div>
+                <p className="font-semibold text-sm">
+                  {user?.firstName} {user?.lastName}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {user?.phoneNumber}
+                </p>
+              </div>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={logout}
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <LogOut className="h-4 w-4" />
+            </Button>
+          </div>
+        </Card>
       </div>
 
       {/* Main Content */}
@@ -76,6 +137,7 @@ const Index = () => {
               setShowSendForm(false);
               setSelectedContact(undefined);
             }}
+            onTransactionComplete={handleTransactionComplete}
           />
         )}
 
@@ -93,9 +155,19 @@ const Index = () => {
               <h3 className="font-semibold">Senaste transaktioner</h3>
             </div>
             <div className="divide-y">
-              {mockTransactions.slice(0, 5).map((transaction) => (
-                <TransactionItem key={transaction.id} transaction={transaction} />
-              ))}
+              {isLoadingTransactions ? (
+                <div className="p-4 text-center text-muted-foreground">
+                  Laddar transaktioner...
+                </div>
+              ) : transactions.length > 0 ? (
+                transactions.map((transaction) => (
+                  <TransactionItem key={transaction.id} transaction={transaction} />
+                ))
+              ) : (
+                <div className="p-4 text-center text-muted-foreground">
+                  Inga transaktioner än
+                </div>
+              )}
             </div>
           </Card>
         )}

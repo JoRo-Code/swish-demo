@@ -1,28 +1,62 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Send, X } from "lucide-react";
-import { Contact } from "@/lib/mockData";
+import { Contact, userService } from "@/services/userService";
+import { transactionService } from "@/services/transactionService";
+import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 
 interface SendMoneyFormProps {
   selectedContact?: Contact;
   onClose: () => void;
+  onTransactionComplete?: () => void;
 }
 
-export const SendMoneyForm = ({ selectedContact, onClose }: SendMoneyFormProps) => {
+export const SendMoneyForm = ({ selectedContact, onClose, onTransactionComplete }: SendMoneyFormProps) => {
+  const { user, refreshBalance } = useAuth();
   const [amount, setAmount] = useState("");
   const [recipient, setRecipient] = useState(selectedContact?.phone || "");
   const [message, setMessage] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [isLoadingContacts, setIsLoadingContacts] = useState(false);
   const { toast } = useToast();
 
-  const handleSend = (e: React.FormEvent) => {
+  useEffect(() => {
+    if (user) {
+      loadContacts();
+    }
+  }, [user]);
+
+  const loadContacts = async () => {
+    if (!user) return;
+    
+    setIsLoadingContacts(true);
+    try {
+      const response = await userService.getUserContacts(user.id);
+      if (response.data) {
+        setContacts(response.data.contacts);
+      }
+    } catch (error) {
+      console.error('Error loading contacts:', error);
+    } finally {
+      setIsLoadingContacts(false);
+    }
+  };
+
+  const handleContactSelect = (contact: Contact) => {
+    setRecipient(contact.phone);
+  };
+
+  const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!amount || !recipient) {
+    if (!amount || !recipient || !user) {
       toast({
         title: "Fel",
         description: "Vänligen fyll i alla obligatoriska fält",
@@ -31,17 +65,66 @@ export const SendMoneyForm = ({ selectedContact, onClose }: SendMoneyFormProps) 
       return;
     }
 
-    // Simulate sending money
-    toast({
-      title: "Betalning skickad!",
-      description: `${amount} kr har skickats till ${selectedContact?.name || recipient}`,
-    });
-    
-    // Reset form
-    setAmount("");
-    setRecipient("");
-    setMessage("");
-    onClose();
+    // Validate and clean the amount
+    const numericAmount = parseFloat(amount);
+    if (isNaN(numericAmount) || numericAmount <= 0) {
+      toast({
+        title: "Fel",
+        description: "Vänligen ange ett giltigt belopp",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    // Round to 2 decimal places to prevent floating point precision issues
+    const cleanAmount = Math.round(numericAmount * 100) / 100;
+
+    setIsLoading(true);
+
+    try {
+      const response = await transactionService.createTransfer({
+        sender_phone: user.phoneNumber,
+        receiver_phone: recipient,
+        amount: cleanAmount,
+        description: message || undefined
+      });
+
+      if (response.data) {
+        toast({
+          title: "Betalning skickad!",
+          description: `${amount} kr har skickats till ${selectedContact?.name || recipient}`,
+        });
+        
+        // Reset form
+        setAmount("");
+        setRecipient("");
+        setMessage("");
+        
+        // Refresh balance and notify parent component
+        if (onTransactionComplete) {
+          onTransactionComplete();
+        }
+        
+        // Refresh user balance
+        await refreshBalance();
+        
+        onClose();
+      } else {
+        toast({
+          title: "Betalning misslyckades",
+          description: response.error || "Ett fel inträffade vid betalningen",
+          variant: "destructive"
+        });
+      }
+    } catch (error) {
+      toast({
+        title: "Betalning misslyckades",
+        description: "Ett oväntat fel inträffade",
+        variant: "destructive"
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -67,6 +150,44 @@ export const SendMoneyForm = ({ selectedContact, onClose }: SendMoneyFormProps) 
             <p className="text-sm text-muted-foreground mt-1">
               {selectedContact.name}
             </p>
+          )}
+        </div>
+
+        {/* Contacts Section */}
+        <div>
+          <Label className="text-sm font-medium">Välj från kontakter</Label>
+          {isLoadingContacts ? (
+            <div className="mt-2 text-center text-muted-foreground text-sm">
+              Laddar kontakter...
+            </div>
+          ) : contacts.length > 0 ? (
+            <div className="mt-2 flex space-x-3 overflow-x-auto pb-2">
+              {contacts.map((contact) => (
+                <button
+                  key={contact.id}
+                  type="button"
+                  onClick={() => handleContactSelect(contact)}
+                  className={`flex flex-col items-center space-y-1 min-w-fit p-2 rounded-lg transition-colors ${
+                    recipient === contact.phone 
+                      ? 'bg-primary/10 border border-primary' 
+                      : 'hover:bg-muted'
+                  }`}
+                >
+                  <Avatar className="h-10 w-10">
+                    <AvatarFallback className="bg-primary text-primary-foreground font-semibold text-xs">
+                      {contact.initials}
+                    </AvatarFallback>
+                  </Avatar>
+                  <span className="text-xs text-center max-w-16 truncate">
+                    {contact.name.split(' ')[0]}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="mt-2 text-center text-muted-foreground text-sm py-2">
+              Inga kontakter än
+            </div>
           )}
         </div>
 
